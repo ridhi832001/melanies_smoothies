@@ -3,30 +3,43 @@ from snowflake.snowpark.context import get_active_session
 from snowflake.snowpark.functions import col, when_matched
 
 st.title("Pending Smoothie Orders")
-
 st.write("Orders that need to be filled!")
 
 session = get_active_session()
-my_dataframe = session.table("smoothies.public.orders").filter(col("ORDER_FILLED")==0).collect()
 
-if my_dataframe:
- editable_df = st.data_editor(my_dataframe)
- submitted =st.button('submit')
- if submitted:
-    
-    og_dataset = session.table("smoothies.public.orders")
-    edited_dataset = session.create_dataframe(editable_df)
-    
-    try:
-        og_dataset.merge(edited_dataset
-                     , (og_dataset['ORDER_UID'] == edited_dataset['ORDER_UID'])
-                     , [when_matched().update({'ORDER_FILLED': edited_dataset['ORDER_FILLED']})]
-        
-                    )
-        st.success('order placed', icon = '👍')
+# Load result into Pandas for Streamlit editing
+df = session.table("smoothies.public.orders") \
+            .filter(col("ORDER_FILLED") == 0) \
+            .to_pandas()
 
-    except:
-        st.write('something went wrong')
+if not df.empty:
+
+    editable_df = st.data_editor(df, use_container_width=True)
+
+    submitted = st.button("Submit")
+
+    if submitted:
+
+        og_dataset = session.table("smoothies.public.orders")
+
+        # Convert edited DataFrame back to Snowpark DataFrame
+        edited_dataset = session.create_dataframe(editable_df)
+
+        try:
+            og_dataset.merge(
+                edited_dataset,
+                og_dataset["ORDER_UID"] == edited_dataset["ORDER_UID"],
+                [
+                    when_matched().update({
+                        "ORDER_FILLED": edited_dataset["ORDER_FILLED"]
+                    })
+                ]
+            ).collect()  # REQUIRED to execute merge
+
+            st.success("Order updated successfully!", icon="👍")
+
+        except Exception as e:
+            st.error(f"Something went wrong: {e}")
+
 else:
-    st.success('Someone clicked the button', icon = '👍')
-
+    st.success("No pending smoothie orders! 🎉")
