@@ -1,46 +1,38 @@
-
 import streamlit as st
 from snowflake.snowpark.context import get_active_session
-from snowflake.snowpark.functions import col 
+from snowflake.snowpark.functions import col, when_matched
 
-st.title("Customize your smoothie")
-
-st.write("This is a simple Streamlit app running inside Snowflake!")
-
-
-
-
-
-name_on_order = st.text_input("Name on Smoothie:")
-st.write("Name on smoothie", name_on_order)
+st.title("Pending Smoothie Orders")
+st.write("Orders that need to be filled!")
 
 session = get_active_session()
-my_dataframe = session.table("smoothies.public.fruit_options").select(col('fruit_name'))
-st.dataframe(data=my_dataframe, use_container_width=True)
 
-ingredients_list=st.multiselect(
-    'Choose upto 5 ingredients'
-    ,my_dataframe
-)
-if ingredients_list:
-    st.write(ingredients_list)
-    st.text(ingredients_list)
+# Load data into a Pandas dataframe for st.data_editor
+df = session.table("smoothies.public.orders") \
+            .filter(col("ORDER_FILLED") == 0) \
+            .to_pandas()
 
-ingredients_string=''
+if not df.empty:
 
-for fruit_chosen in ingredients_list:
-    ingredients_string +=fruit_chosen
-st.write(ingredients_string)
+    editable_df = st.data_editor(df, use_container_width=True)
 
-my_insert_stmt = """ insert into smoothies.public.orders(ingredients,name_on_order)
-            values ('""" + ingredients_string + """','""" +name_on_order+ """')"""
+    submitted = st.button("Submit")
 
+    if submitted:
 
-st.write(my_insert_stmt)
+        # Convert back into Snowpark dataframe
+        edited_dataset = session.create_dataframe(editable_df)
 
-time_to_insert = st.button('submit order')
+        og_dataset = session.table("smoothies.public.orders")
 
-if time_to_insert:
-    session.sql(my_insert_stmt).collect()
-    st.success('Your Smoothie is ordered!', icon="✅")
-
+        try:
+            # Perform merge
+            og_dataset.merge(
+                edited_dataset,
+                og_dataset["ORDER_UID"] == edited_dataset["ORDER_UID"],
+                [
+                    when_matched().update(
+                        {"ORDER_FILLED": edited_dataset["ORDER_FILLED"]}
+                    )
+                ]
+            ).collect()  # IMPORTANT: triggers execution
